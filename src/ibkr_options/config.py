@@ -1,0 +1,39 @@
+"""Connection configuration.
+
+Mode resolution order: --live/--paper CLI flag > IBKR_MODE env var > config file > paper.
+Config file: ~/.ibkr-options/config.toml, e.g.
+
+    mode = "paper"          # or "live"
+    host = "127.0.0.1"
+    client_id = 17
+    [ports]
+    paper = 4002
+    live = 4001
+"""
+
+import os
+import tomllib
+from pathlib import Path
+
+CONFIG_PATH = Path.home() / ".ibkr-options" / "config.toml"
+
+DEFAULT_PORTS = {"paper": 4002, "live": 4001}
+
+
+def load_config(mode: str | None = None) -> dict:
+    file_cfg: dict = {}
+    if CONFIG_PATH.exists():
+        file_cfg = tomllib.loads(CONFIG_PATH.read_text())
+
+    resolved_mode = mode or os.environ.get("IBKR_MODE") or file_cfg.get("mode") or "paper"
+    if resolved_mode not in ("paper", "live"):
+        raise ValueError(f"invalid mode {resolved_mode!r}: must be 'paper' or 'live'")
+
+    ports = {**DEFAULT_PORTS, **file_cfg.get("ports", {})}
+    return {
+        "mode": resolved_mode,
+        "host": file_cfg.get("host", "127.0.0.1"),
+        "port": ports[resolved_mode],
+        "client_id": file_cfg.get("client_id", 17),
+        "timeout": file_cfg.get("timeout", 5.0),
+    }

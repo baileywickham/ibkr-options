@@ -1,0 +1,24 @@
+[project]
+name = "ibkr-options"
+version = "0.1.0"
+description = "Options trading CLI for Interactive Brokers via ib_async, with preview/confirm/execute safeguards"
+readme = "README.md"
+authors = [
+    { name = "baileywickham", email = "baileywickham@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "ib-async>=2.1.0",
+]
+
+[project.scripts]
+ibkr = "ibkr_options.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

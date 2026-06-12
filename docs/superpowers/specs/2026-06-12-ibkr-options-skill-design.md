@@ -12,12 +12,16 @@ approving exactly that order in chat.
 
 ## Decisions
 
-- **Account**: live from day one (account is ~$1,003; user accepted risk).
+- **Account**: both paper and live supported; **paper is the default** and live
+  requires an explicit `--live` flag (revised per user 2026-06-12). Gateway ports:
+  paper 4002, live 4001.
 - **Scope**: single-leg calls/puts and two-leg vertical spreads (native combo/BAG orders).
 - **Guardrails**: chat confirmation is the only gate. No max-risk caps, no naked-short
   blocking, no daily limits. Limit orders only — market orders are not implemented.
 - **Gateway**: user launches and logs into IB Gateway manually (live port 4001).
   The CLI connects when it's up and fails with a clear message when it isn't.
+- **Confirmation policy**: live orders always require explicit user confirmation of
+  the preview in chat. Paper orders may be self-confirmed by Claude for testing.
 
 ## Architecture
 
