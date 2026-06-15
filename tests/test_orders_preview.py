@@ -13,7 +13,7 @@ class FakeGreeks:
 
 
 class FakeTicker:
-    bid, ask, last = 3.40, 3.60, 3.50
+    bid, ask, last, close = 3.40, 3.60, 3.50, 3.45
     modelGreeks = FakeGreeks()
 
     def marketPrice(self):
@@ -31,6 +31,15 @@ class FakeIB:
         self.placed = []
 
     def reqMarketDataType(self, kind):
+        pass
+
+    def reqMktData(self, contract, *args):
+        return FakeTicker()
+
+    def cancelMktData(self, contract):
+        pass
+
+    def sleep(self, seconds):
         pass
 
     def reqTickers(self, contract):

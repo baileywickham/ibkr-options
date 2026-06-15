@@ -20,18 +20,47 @@ def num(x):
     return x
 
 
-def get_ticker(ib, contract):
-    """Fetch a ticker, falling back to delayed data when realtime is unsubscribed.
+def _has_price(ticker) -> bool:
+    return any(
+        num(v) is not None
+        for v in (ticker.bid, ticker.ask, ticker.last, ticker.close)
+    )
 
-    Returns (ticker, data_kind) where data_kind is 'realtime' or 'delayed'.
+
+def data_kind(ib) -> str:
+    return "realtime" if getattr(ib, "marketDataType", 3) == 1 else "delayed"
+
+
+def get_ticker(ib, contract, wait: float = 4.0, want_greeks: bool = False):
+    """Stream a ticker and wait briefly for prices to arrive.
+
+    The market-data type is set once at connect time (see conn.connect); we do
+    not toggle it here, which is what triggers IBKR pacing errors. Streaming +
+    a short wait is far more reliable than snapshots under delayed data.
     """
-    ib.reqMarketDataType(1)
-    [ticker] = ib.reqTickers(contract)
-    if num(ticker.bid) is None and num(ticker.ask) is None and num(ticker.last) is None:
-        ib.reqMarketDataType(3)
-        [ticker] = ib.reqTickers(contract)
-        return ticker, "delayed"
-    return ticker, "realtime"
+    ticker = ib.reqMktData(contract, "", False, False)
+    deadline, step = wait, 0.25
+    while deadline > 0:
+        ib.sleep(step)
+        deadline -= step
+        ready = _has_price(ticker) and (not want_greeks or ticker.modelGreeks is not None)
+        if ready:
+            break
+    ib.cancelMktData(contract)
+    return ticker, data_kind(ib)
+
+
+def spot_price(ib, stock) -> float | None:
+    """Reference price for the underlying via the last daily bar.
+
+    Streaming stock quotes intermittently fail under delayed data (IBKR error
+    322 on some NASDAQ names); the historical-data path is reliable.
+    """
+    bars = ib.reqHistoricalData(
+        stock, endDateTime="", durationStr="1 D", barSizeSetting="1 day",
+        whatToShow="TRADES", useRTH=True, formatDate=1,
+    )
+    return num(bars[-1].close) if bars else None
 
 
 def quote_fields(ticker) -> dict:
@@ -52,14 +81,15 @@ def quote_fields(ticker) -> dict:
 
 def resolve_stock(ib, symbol: str) -> Stock:
     stk = Stock(symbol, "SMART", "USD")
-    if not ib.qualifyContracts(stk):
+    if not [c for c in ib.qualifyContracts(stk) if c is not None]:
         raise ContractNotFound(f"no US stock found for symbol {symbol!r}")
     return stk
 
 
 def resolve_option(ib, symbol: str, expiry: str, strike: float, right: str) -> Option:
     opt = Option(symbol, expiry, strike, right, "SMART", currency="USD")
-    qualified = ib.qualifyContracts(opt)
+    # ib_async returns [None] (not []) for a contract it cannot qualify.
+    qualified = [c for c in ib.qualifyContracts(opt) if c is not None]
     if not qualified:
         raise ContractNotFound(
             f"no option contract for {symbol} {expiry} {strike}{right}; "
@@ -73,8 +103,8 @@ def resolve_option(ib, symbol: str, expiry: str, strike: float, right: str) -> O
 
 def option_chain(ib, symbol: str, expiry: str | None, strikes_n: int) -> dict:
     stk = resolve_stock(ib, symbol)
-    stock_ticker, data_kind = get_ticker(ib, stk)
-    spot = num(stock_ticker.marketPrice())
+    spot = spot_price(ib, stk)
+    kind = data_kind(ib)
 
     chains = ib.reqSecDefOptParams(stk.symbol, "", stk.secType, stk.conId)
     smart = [c for c in chains if c.exchange == "SMART"]
@@ -84,7 +114,7 @@ def option_chain(ib, symbol: str, expiry: str | None, strikes_n: int) -> dict:
 
     expirations = sorted(chain.expirations)
     if expiry is None:
-        return {"symbol": symbol, "spot": spot, "data": data_kind, "expirations": expirations}
+        return {"symbol": symbol, "spot": spot, "data": kind, "expirations": expirations}
 
     if expiry not in expirations:
         raise ContractNotFound(f"expiry {expiry} not in chain; available: {expirations}")
@@ -101,13 +131,14 @@ def option_chain(ib, symbol: str, expiry: str | None, strikes_n: int) -> dict:
                 opt = resolve_option(ib, symbol, expiry, strike, right)
             except ContractNotFound:
                 continue
-            ticker, _ = get_ticker(ib, opt)
+            ticker, _ = get_ticker(ib, opt, want_greeks=True)
             row["call" if right == "C" else "put"] = quote_fields(ticker)
-        rows.append(row)
+        if "call" in row or "put" in row:
+            rows.append(row)
     return {
         "symbol": symbol,
         "spot": spot,
         "expiry": expiry,
-        "data": data_kind,
+        "data": kind,
         "strikes": rows,
     }

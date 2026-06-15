@@ -11,7 +11,7 @@ import sys
 
 logging.getLogger("ib_async").setLevel(logging.CRITICAL)
 
-from . import orders
+from . import market, orders
 from .config import load_config
 from .conn import GatewayUnreachable, connect
 from .market import ContractNotFound, get_ticker, option_chain, quote_fields, resolve_option, resolve_stock
@@ -159,11 +159,13 @@ def run(args) -> int:
                     raise ValueError("option quote needs all of --expiry, --strike, --right")
                 contract = resolve_option(ib, args.symbol.upper(), _norm_expiry(args.expiry),
                                           args.strike, _norm_right(args.right))
+                ticker, dk = get_ticker(ib, contract, want_greeks=True)
+                out = {"contract": contract.localSymbol or contract.symbol,
+                       "data": dk, **quote_fields(ticker)}
             else:
-                contract = resolve_stock(ib, args.symbol.upper())
-            ticker, data_kind = get_ticker(ib, contract)
-            out = {"contract": contract.localSymbol or contract.symbol,
-                   "data": data_kind, **quote_fields(ticker)}
+                stk = resolve_stock(ib, args.symbol.upper())
+                out = {"contract": stk.symbol, "data": market.data_kind(ib),
+                       "last_close": market.spot_price(ib, stk)}
         elif args.command == "place":
             out = (orders.execute_single(ib, args.execute, params) if args.execute
                    else orders.preview_single(ib, params))

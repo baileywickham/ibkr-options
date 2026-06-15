@@ -27,7 +27,7 @@ def _order_status(ib, trade) -> dict:
 
 def preview_single(ib, params: dict) -> dict:
     opt = resolve_option(ib, params["symbol"], params["expiry"], params["strike"], params["right"])
-    ticker, data_kind = get_ticker(ib, opt)
+    ticker, data_kind = get_ticker(ib, opt, want_greeks=True)
     quote = quote_fields(ticker)
     cost = None
     if params.get("limit") is not None:

@@ -36,4 +36,7 @@ def load_config(mode: str | None = None) -> dict:
         "port": ports[resolved_mode],
         "client_id": file_cfg.get("client_id", 17),
         "timeout": file_cfg.get("timeout", 5.0),
+        # 1=realtime, 3=delayed. Default delayed: works without a market-data
+        # subscription. Set to 1 in config.toml once you subscribe.
+        "market_data_type": file_cfg.get("market_data_type", 3),
     }
