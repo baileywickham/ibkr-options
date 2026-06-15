@@ -26,10 +26,22 @@ ibkr place ... --execute TOKEN                    # place previewed order
 ibkr place-vertical --symbol AAPL --expiry 2026-07-17 --right C --side BUY \
            --long-strike 200 --short-strike 205 --qty 1 --limit 1.80
 ibkr cancel ORDER_ID
+ibkr close 355C              # PREVIEW closing one position (match by symbol)
+ibkr close --all            # PREVIEW closing every position
+ibkr close 355C --execute TOKEN          # place the closing order(s)
+ibkr close --all --limit 0.02            # override the closing limit price
 ```
 
 Limit orders only; market orders are intentionally not implemented.
 For verticals, `--limit` is the net debit (BUY) or net credit (SELL), always positive.
+
+`close` builds an offsetting order per position (SELL to close a long, BUY to
+close a short) priced marketably at the current bid/ask. There is no native
+close-position call in the IBKR API — this replicates the TWS "Close" button.
+Same preview→confirm→execute flow as place. If a position has no bid/ask quote
+(e.g. a deep-OTM contract whose closing bid is negative), pass `--limit`. The
+preview prints each position, its closing action, quantity, and limit, plus a
+token; nothing is placed until you re-run with `--execute TOKEN`.
 
 ## Confirmation protocol (NON-NEGOTIABLE for live mode)
 

@@ -37,7 +37,11 @@ def save_pending(params: dict, now: float | None = None, pending_dir: Path | Non
 
 
 def consume(token: str, params: dict, now: float | None = None, pending_dir: Path | None = None) -> None:
-    """Validate and burn a token. Raises TokenError unless everything matches."""
+    """Validate and burn a token. Raises TokenError unless everything matches.
+
+    Used by place/place-vertical, where the caller re-supplies the order
+    parameters (a tamper check: edited params produce a different hash).
+    """
     pending_dir = pending_dir or PENDING_DIR
     now = now if now is not None else time.time()
     if make_token(params) != token:
@@ -49,3 +53,23 @@ def consume(token: str, params: dict, now: float | None = None, pending_dir: Pat
     path.unlink()
     if now - payload["created_at"] > TTL_SECONDS:
         raise TokenError("preview expired (>5 minutes old); run the preview again")
+
+
+def consume_stored(token: str, now: float | None = None, pending_dir: Path | None = None) -> dict:
+    """Burn a token and return its stored params.
+
+    Used by close, where the previewed plan (contracts, quantities, pinned
+    limit prices) lives in the pending file; the token is the handle to it.
+    The preview→see→execute flow still holds: nothing is placed until the user
+    runs execute with the token they were shown.
+    """
+    pending_dir = pending_dir or PENDING_DIR
+    now = now if now is not None else time.time()
+    path = pending_dir / f"{token}.json"
+    if not path.exists():
+        raise TokenError("no pending preview for this token (already used, or never previewed)")
+    payload = json.loads(path.read_text())
+    path.unlink()
+    if now - payload["created_at"] > TTL_SECONDS:
+        raise TokenError("preview expired (>5 minutes old); run the preview again")
+    return payload["params"]

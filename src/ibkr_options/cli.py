@@ -126,6 +126,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("cancel", help="cancel an open order")
     p.add_argument("order_id", type=int)
 
+    p = sub.add_parser("close", help="close (offset) a position with a marketable limit; "
+                                     "preview by default, --execute TOKEN to place")
+    p.add_argument("query", nargs="?", help="match against a position's symbol; omit when using --all")
+    p.add_argument("--all", action="store_true", help="close every open position")
+    p.add_argument("--limit", type=float, help="override the closing limit price (per contract)")
+    p.add_argument("--tif", default="DAY", choices=["DAY", "GTC"])
+    p.add_argument("--execute", metavar="TOKEN", help="execute a previewed close")
+
     return parser
 
 
@@ -174,6 +182,16 @@ def run(args) -> int:
                    else orders.preview_vertical(ib, params))
         elif args.command == "cancel":
             out = {"mode": mode, **orders.cancel_order(ib, args.order_id)}
+        elif args.command == "close":
+            if args.execute:
+                out = orders.execute_close(ib, args.execute)
+            else:
+                if args.all and args.query:
+                    raise ValueError("pass either a position query or --all, not both")
+                if not args.all and not args.query:
+                    raise ValueError("specify a position query or --all")
+                query = None if args.all else args.query
+                out = orders.preview_close(ib, mode, query, args.limit, args.tif)
         else:  # pragma: no cover
             raise ValueError(f"unknown command {args.command}")
     finally:

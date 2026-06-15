@@ -42,7 +42,7 @@ confirmation rules for Claude.
 | `place` | single-leg preview / execute |
 | `place-vertical` | two-leg vertical preview / execute |
 | `cancel ID` | cancel open order |
-| `close` | flatten a position (preview/execute like place) |
+| `close QUERY` / `close --all` | flatten position(s) with offsetting marketable limit orders (preview/execute) |
 
 ### Confirmation mechanism
 
