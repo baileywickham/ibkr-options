@@ -15,6 +15,11 @@ def test_live_delayed_allowed_with_override():
     _guard_live_delayed({"mode": "live", "market_data_type": 3}, allow_delayed=True)
 
 
+def test_live_delayed_allowed_via_config_optin():
+    cfg = {"mode": "live", "market_data_type": 3, "allow_delayed_live": True}
+    _guard_live_delayed(cfg, allow_delayed=False)
+
+
 def test_live_realtime_ok():
     _guard_live_delayed({"mode": "live", "market_data_type": 1}, allow_delayed=False)
 

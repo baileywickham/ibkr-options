@@ -63,8 +63,10 @@ token; nothing is placed until you re-run with `--execute TOKEN`.
   `~/.ibkr-options/config.toml` or orders fail with an account error (exit 5).
 - **Delayed-data guard**: by default the tool uses delayed (~15 min) data
   (`market_data_type = 3`). A **live** order priced off delayed data is refused
-  (exit 6) unless you pass `--allow-delayed`. Subscribe to real-time data and set
-  `market_data_type = 1` in config for live trading. Paper is never blocked.
+  (exit 6) unless you pass `--allow-delayed` or set `allow_delayed_live = true`
+  in config. This account runs that opt-in on (buy-and-hold, self-set limits);
+  previews still print a DELAYED warning. For realtime, subscribe and set
+  `market_data_type = 1`. Paper is never blocked.
 - **Rejection surfacing**: a rejected order returns `"rejected": true` with the
   reason in `messages` (e.g. `[202] Limit price too far outside of NBBO`). Always
   check for this — a `Cancelled`/`Inactive` status means the order did NOT work.

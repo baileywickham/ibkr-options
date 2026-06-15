@@ -27,7 +27,8 @@ _TRADING_EXECUTE = {"place", "place-vertical", "stock", "close"}
 
 
 def _guard_live_delayed(cfg: dict, allow_delayed: bool) -> None:
-    if cfg["mode"] == "live" and cfg.get("market_data_type", 3) == 3 and not allow_delayed:
+    permitted = allow_delayed or cfg.get("allow_delayed_live", False)
+    if cfg["mode"] == "live" and cfg.get("market_data_type", 3) == 3 and not permitted:
         raise DelayedDataBlock(
             "refusing to place a LIVE order priced off delayed (~15 min) market "
             "data. Subscribe to real-time data and set market_data_type = 1 in "

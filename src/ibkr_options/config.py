@@ -42,4 +42,8 @@ def load_config(mode: str | None = None) -> dict:
         # Account to place orders against. None = auto (sole managed account).
         # Required when the login has more than one account.
         "account": file_cfg.get("account"),
+        # Permit live orders priced off delayed data without --allow-delayed.
+        # Opt-in: only set true if you knowingly accept delayed quotes (e.g.
+        # buy-and-hold with limits you set yourself). Previews still warn.
+        "allow_delayed_live": file_cfg.get("allow_delayed_live", False),
     }
