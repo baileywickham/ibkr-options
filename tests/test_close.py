@@ -36,6 +36,7 @@ class FakeTrade:
     def __init__(self, order):
         self.order = order
         self.orderStatus = FakeOrderStatus()
+        self.log = []
 
 
 class FakeOrder:
@@ -130,7 +131,7 @@ def test_no_matching_position_errors():
 def test_execute_places_planned_offsetting_orders():
     ib = make_ib()
     token = orders.preview_close(ib, "paper", None, None, "DAY")["token"]
-    out = orders.execute_close(ib, token)
+    out = orders.execute_close(ib, None, token)
     assert len(ib.placed) == 2
     assert (101, "SELL", 1.0, 0.08) in ib.placed
     assert (102, "BUY", 1.0, 0.10) in ib.placed
@@ -142,7 +143,7 @@ def test_execute_skips_position_that_vanished():
     token = orders.preview_close(ib, "paper", None, None, "DAY")["token"]
     # position 102 closed out elsewhere between preview and execute
     ib._positions = [FakePosition(LONG, 1.0)]
-    out = orders.execute_close(ib, token)
+    out = orders.execute_close(ib, None, token)
     assert [p[0] for p in ib.placed] == [101]
     statuses = {o["contract"]: o.get("status") for o in out["orders"]}
     assert statuses["AAPL  260717C00360000"] == "skipped_not_open"
@@ -151,6 +152,6 @@ def test_execute_skips_position_that_vanished():
 def test_close_token_is_one_shot():
     ib = make_ib()
     token = orders.preview_close(ib, "paper", None, None, "DAY")["token"]
-    orders.execute_close(ib, token)
+    orders.execute_close(ib, None, token)
     with pytest.raises(tokens.TokenError):
-        orders.execute_close(ib, token)
+        orders.execute_close(ib, None, token)

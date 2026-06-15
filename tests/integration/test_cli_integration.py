@@ -40,3 +40,24 @@ def test_cli_preview_emits_token_and_places_nothing(ib, market):
     ocode, orders = run_cli("orders")
     assert ocode == 0
     assert all(o["limit"] != 1.00 for o in orders["orders"])
+
+
+def test_cli_paper_preview_warns_about_delayed_data(ib, market):
+    code, out = run_cli(
+        "place", "--symbol", market["symbol"], "--expiry", market["expiry"],
+        "--strike", str(market["itm_call"]), "--right", "C",
+        "--side", "BUY", "--qty", "1", "--limit", "1.00",
+    )
+    assert code == 0, out
+    assert "DELAYED" in out.get("warning", "")
+
+
+def test_cli_stock_preview(ib, market):
+    code, out = run_cli(
+        "stock", "--symbol", market["symbol"], "--side", "BUY",
+        "--qty", "1", "--limit", "1.00",
+    )
+    assert code == 0, out
+    assert out["action"] == "place_stock"
+    assert out["notional_usd"] == 1.00
+    assert out["token"]

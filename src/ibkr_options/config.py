@@ -39,4 +39,7 @@ def load_config(mode: str | None = None) -> dict:
         # 1=realtime, 3=delayed. Default delayed: works without a market-data
         # subscription. Set to 1 in config.toml once you subscribe.
         "market_data_type": file_cfg.get("market_data_type", 3),
+        # Account to place orders against. None = auto (sole managed account).
+        # Required when the login has more than one account.
+        "account": file_cfg.get("account"),
     }

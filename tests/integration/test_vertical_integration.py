@@ -23,7 +23,7 @@ def test_vertical_execute_rests_then_cancel(lab):
     params = lab.vertical_params("BUY", 1, 0.01)
     out = preview_vertical(lab.ib, params)
     before = lab.open_order_ids()
-    res = execute_vertical(lab.ib, out["token"], params)
+    res = execute_vertical(lab.ib, None, out["token"], params)
     lab.ib.sleep(2)
 
     oid = res["order_id"]

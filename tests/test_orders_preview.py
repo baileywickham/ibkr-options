@@ -88,7 +88,7 @@ def test_preview_vertical_never_places_and_reports_risk():
 def test_execute_without_preview_is_rejected_before_any_ib_call():
     ib = FakeIB()
     with pytest.raises(tokens.TokenError):
-        orders.execute_single(ib, tokens.make_token(SINGLE), SINGLE)
+        orders.execute_single(ib, None, tokens.make_token(SINGLE), SINGLE)
     assert ib.placed == []
 
 
@@ -97,5 +97,5 @@ def test_execute_with_token_for_different_order_is_rejected():
     out = orders.preview_single(ib, SINGLE)
     bigger = {**SINGLE, "qty": 50}
     with pytest.raises(tokens.TokenError):
-        orders.execute_single(ib, out["token"], bigger)
+        orders.execute_single(ib, None, out["token"], bigger)
     assert ib.placed == []

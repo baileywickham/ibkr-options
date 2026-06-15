@@ -25,6 +25,7 @@ ibkr place --symbol AAPL --expiry 2026-07-17 --strike 200 --right C \
 ibkr place ... --execute TOKEN                    # place previewed order
 ibkr place-vertical --symbol AAPL --expiry 2026-07-17 --right C --side BUY \
            --long-strike 200 --short-strike 205 --qty 1 --limit 1.80
+ibkr stock --symbol AAPL --side BUY --qty 10 --limit 250     # shares (preview/execute)
 ibkr cancel ORDER_ID
 ibkr close 355C              # PREVIEW closing one position (match by symbol)
 ibkr close --all            # PREVIEW closing every position
@@ -54,6 +55,21 @@ token; nothing is placed until you re-run with `--execute TOKEN`.
 4. Re-run the identical command with `--execute TOKEN`. The CLI rejects the token
    if any parameter changed, the preview is older than 5 minutes, or it was
    already used — in that case re-preview, re-confirm.
+
+## Real-money safety (read before live trading)
+
+- **Account pinning**: every order pins an account. With a single-account login
+  it's automatic; if the login has multiple accounts, set `account = "U..."` in
+  `~/.ibkr-options/config.toml` or orders fail with an account error (exit 5).
+- **Delayed-data guard**: by default the tool uses delayed (~15 min) data
+  (`market_data_type = 3`). A **live** order priced off delayed data is refused
+  (exit 6) unless you pass `--allow-delayed`. Subscribe to real-time data and set
+  `market_data_type = 1` in config for live trading. Paper is never blocked.
+- **Rejection surfacing**: a rejected order returns `"rejected": true` with the
+  reason in `messages` (e.g. `[202] Limit price too far outside of NBBO`). Always
+  check for this — a `Cancelled`/`Inactive` status means the order did NOT work.
+- **Limit orders only**, and prices must respect IBKR tick rules ($0.05 ≥ $3.00,
+  else $0.01) or IBKR rejects them.
 
 ## Operational notes
 

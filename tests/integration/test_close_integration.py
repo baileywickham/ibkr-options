@@ -22,7 +22,7 @@ def _open_long(lab):
     # one tick over the ask; a large buffer trips IBKR error 202 (too aggressive)
     params = lab.single_params(lab.market["itm_call"], "BUY", 1, round(ask + 0.05, 2))
     out = preview_single(lab.ib, params)
-    execute_single(lab.ib, out["token"], params)
+    execute_single(lab.ib, None, out["token"], params)
     if not lab.wait_position(opt.conId, timeout=10):
         pytest.skip("paper did not fill (market likely closed)")
     return opt
@@ -49,7 +49,7 @@ def test_close_preview_builds_offsetting_order(lab):
 def test_close_all_flattens_account(lab):
     opt = _open_long(lab)
     out = preview_close(lab.ib, "paper", None, None, "DAY")
-    execute_close(lab.ib, out["token"])
+    execute_close(lab.ib, None, out["token"])
     # closing sells at the bid (marketable); poll for the position to clear
     cleared = False
     for _ in range(10):

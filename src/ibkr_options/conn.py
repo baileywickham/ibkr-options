@@ -7,6 +7,34 @@ class GatewayUnreachable(Exception):
     pass
 
 
+class AccountError(Exception):
+    pass
+
+
+def resolve_account(ib, cfg: dict) -> str:
+    """The account to place orders against.
+
+    Orders must pin an account: a login with more than one account (common once
+    paper and live coexist, or sub-accounts exist) would otherwise route to an
+    IBKR-chosen default. Uses the configured account if set, else the sole
+    managed account, else errors and asks the user to choose.
+    """
+    accounts = [a for a in ib.managedAccounts() if a and a != "All"]
+    want = cfg.get("account")
+    if want:
+        if want not in accounts:
+            raise AccountError(f"configured account {want!r} not in this login's accounts {accounts}")
+        return want
+    if len(accounts) == 1:
+        return accounts[0]
+    if not accounts:
+        raise AccountError("no managed accounts returned by Gateway")
+    raise AccountError(
+        f"login has multiple accounts {accounts}; set account = \"<code>\" in "
+        f"~/.ibkr-options/config.toml to choose which one orders go to"
+    )
+
+
 def connect(cfg: dict) -> IB:
     ib = IB()
     try:

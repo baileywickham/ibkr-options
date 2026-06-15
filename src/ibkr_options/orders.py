@@ -8,19 +8,86 @@ are byte-identical to the previewed ones, the preview exists, and it is fresh).
 from ib_async import ComboLeg, Contract, LimitOrder
 
 from . import tokens
-from .market import get_ticker, num, quote_fields, resolve_option
+from .market import get_ticker, num, quote_fields, resolve_option, resolve_stock, spot_price
 from .verticals import vertical_risk
 
+# Order statuses that mean the order is not (and will not become) working.
+_DEAD_STATUSES = {"Cancelled", "ApiCancelled", "Inactive"}
 
-def _order_status(ib, trade) -> dict:
-    ib.sleep(1.5)
-    return {
+
+def _limit_order(account: str | None, side: str, qty, limit, tif: str) -> LimitOrder:
+    order = LimitOrder(side, qty, limit, tif=tif)
+    if account:
+        order.account = account
+    return order
+
+
+def _status_dict(trade, collected: dict | None = None) -> dict:
+    """Build the result dict from a trade plus any captured error events.
+
+    Pure (no IB calls) so the status/rejection logic is unit-testable. Messages
+    merge two sources keyed by error code: `trade.log` and `collected` (events
+    seen via ib.errorEvent). IBKR delivers the meaningful rejection reason — e.g.
+    202 'limit too far outside NBBO' — only through the event stream, never in
+    trade.log, so both sources are required.
+    """
+    messages: dict[int, str] = {}
+    for entry in trade.log:
+        if getattr(entry, "errorCode", 0):
+            messages[entry.errorCode] = entry.message
+    for code, msg in (collected or {}).items():
+        messages[code] = msg
+
+    status = trade.orderStatus.status
+    out = {
         "order_id": trade.order.orderId,
-        "status": trade.orderStatus.status,
+        "status": status,
         "filled": num(trade.orderStatus.filled),
         "remaining": num(trade.orderStatus.remaining),
         "avg_fill_price": num(trade.orderStatus.avgFillPrice),
     }
+    if messages:
+        out["messages"] = [f"[{code}] {msg}" for code, msg in sorted(messages.items())]
+    # A dead status with nothing filled is a rejection the caller must see —
+    # never let it read as a quietly-working order.
+    if status in _DEAD_STATUSES and not num(trade.orderStatus.filled):
+        out["rejected"] = True
+    return out
+
+
+def _place(ib, contract, order, settle: float = 4.0) -> dict:
+    """Place an order and report its outcome, capturing rejection reasons.
+
+    Subscribes to ib.errorEvent for this order's id so the real reason is caught
+    (it never lands in trade.log). Polls rather than reading once, because the
+    status can flip to Cancelled a beat before the reason arrives.
+    """
+    collected: dict[int, str] = {}
+
+    def on_error(reqId, errorCode, errorString, *_a):
+        if reqId == order.orderId:
+            collected[errorCode] = errorString
+
+    event = getattr(ib, "errorEvent", None)
+    if event is not None:
+        event += on_error
+    try:
+        trade = ib.placeOrder(contract, order)
+        waited, step = 0.0, 0.5
+        while waited < settle:
+            ib.sleep(step)
+            waited += step
+            status = trade.orderStatus.status
+            if status == "Filled":
+                break
+            # A resting order won't change; stop once it's clearly working.
+            if status in ("Submitted", "PreSubmitted") and waited >= 2.0:
+                break
+            # If it's dead, keep polling to settle so the late reason is caught.
+    finally:
+        if event is not None:
+            event -= on_error
+    return _status_dict(trade, collected)
 
 
 # -- single leg ---------------------------------------------------------------
@@ -44,13 +111,36 @@ def preview_single(ib, params: dict) -> dict:
     }
 
 
-def execute_single(ib, token: str, params: dict) -> dict:
+def execute_single(ib, account: str | None, token: str, params: dict) -> dict:
     tokens.consume(token, params)
     opt = resolve_option(ib, params["symbol"], params["expiry"], params["strike"], params["right"])
-    order = LimitOrder(params["side"], params["qty"], params["limit"], tif=params["tif"])
-    trade = ib.placeOrder(opt, order)
-    return {"action": "placed_single", "mode": params["mode"], "contract": opt.localSymbol,
-            **_order_status(ib, trade)}
+    order = _limit_order(account, params["side"], params["qty"], params["limit"], params["tif"])
+    return {"action": "placed_single", "mode": params["mode"], "account": account,
+            "contract": opt.localSymbol, **_place(ib, opt, order)}
+
+
+# -- stock --------------------------------------------------------------------
+
+def preview_stock(ib, params: dict) -> dict:
+    stk = resolve_stock(ib, params["symbol"])
+    reference = spot_price(ib, stk)  # stock streaming is unreliable; use last daily close
+    return {
+        "action": "place_stock",
+        "mode": params["mode"],
+        "contract": stk.symbol,
+        "order": params,
+        "reference_close": reference,
+        "notional_usd": round(params["limit"] * params["qty"], 2),
+        "token": tokens.save_pending(params),
+    }
+
+
+def execute_stock(ib, account: str | None, token: str, params: dict) -> dict:
+    tokens.consume(token, params)
+    stk = resolve_stock(ib, params["symbol"])
+    order = _limit_order(account, params["side"], params["qty"], params["limit"], params["tif"])
+    return {"action": "placed_stock", "mode": params["mode"], "account": account,
+            "contract": stk.symbol, **_place(ib, stk, order)}
 
 
 # -- vertical spread ----------------------------------------------------------
@@ -95,15 +185,14 @@ def preview_vertical(ib, params: dict) -> dict:
     }
 
 
-def execute_vertical(ib, token: str, params: dict) -> dict:
+def execute_vertical(ib, account: str | None, token: str, params: dict) -> dict:
     tokens.consume(token, params)
     long_leg, short_leg = _vertical_legs(ib, params)
     combo = _combo_contract(params["symbol"], long_leg, short_leg)
-    order = LimitOrder(params["side"], params["qty"], params["limit"], tif=params["tif"])
-    trade = ib.placeOrder(combo, order)
-    return {"action": "placed_vertical", "mode": params["mode"],
+    order = _limit_order(account, params["side"], params["qty"], params["limit"], params["tif"])
+    return {"action": "placed_vertical", "mode": params["mode"], "account": account,
             "legs": [long_leg.localSymbol, short_leg.localSymbol],
-            **_order_status(ib, trade)}
+            **_place(ib, combo, order)}
 
 
 # -- cancel -------------------------------------------------------------------
@@ -114,7 +203,8 @@ def cancel_order(ib, order_id: int) -> dict:
     for trade in ib.openTrades():
         if trade.order.orderId == order_id:
             ib.cancelOrder(trade.order)
-            return {"action": "cancelled", **_order_status(ib, trade)}
+            ib.sleep(1.0)
+            return {"action": "cancelled", **_status_dict(trade)}
     raise ValueError(f"no open order with id {order_id}")
 
 
@@ -172,7 +262,7 @@ def preview_close(ib, mode: str, query: str | None, limit_override: float | None
             "token": tokens.save_pending(params)}
 
 
-def execute_close(ib, token: str) -> dict:
+def execute_close(ib, account: str | None, token: str) -> dict:
     params = tokens.consume_stored(token)
     by_conid = {p.contract.conId: p for p in ib.positions() if num(p.position)}
     results = []
@@ -185,11 +275,10 @@ def execute_close(ib, token: str) -> dict:
         contract = pos.contract
         if not contract.exchange:
             contract.exchange = "SMART"
-        order = LimitOrder(o["action"], o["qty"], o["limit"], tif=o["tif"])
-        trade = ib.placeOrder(contract, order)
+        order = _limit_order(account, o["action"], o["qty"], o["limit"], o["tif"])
         results.append({"contract": o["localSymbol"], "action": o["action"],
-                        **_order_status(ib, trade)})
-    return {"action": "closed", "mode": params["mode"], "orders": results}
+                        **_place(ib, contract, order)})
+    return {"action": "closed", "mode": params["mode"], "account": account, "orders": results}
 
 
 # -- account state ------------------------------------------------------------
