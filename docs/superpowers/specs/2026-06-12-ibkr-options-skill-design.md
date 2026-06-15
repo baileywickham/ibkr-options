@@ -75,10 +75,20 @@ fresh user confirmation of that specific preview.
 
 ## Testing
 
-- Unit (no IB): token canonicalization/expiry/one-shot semantics, vertical max-loss
-  math, order construction (incl. combo legs), CLI preview-never-places invariant.
-- Integration (Gateway logged in, read-only): status, chain, quote, positions.
-- Live order path: 1-contract far-OTM limit order, user-confirmed, then cancelled.
+- Unit (no IB, `tests/`): token canonicalization/expiry/one-shot semantics,
+  vertical max-loss math, order construction, the preview-never-places invariant,
+  close offsetting/skip logic, and the ib_async `[None]`-qualify regression.
+- Integration (`tests/integration/`, marked `integration`): run against a logged-in
+  paper Gateway on port 4002; skip automatically when unreachable. Contracts are
+  discovered dynamically (live expiry + real strikes) so tests don't rot. The
+  harness flattens the account before and after each order/close test, and
+  fill-dependent tests skip (not fail) if the paper engine doesn't fill.
+  Coverage: account summary, chain expirations/strikes/Greeks, spot, quotes,
+  contract-resolution errors; single-leg preview→rest→cancel, token reuse/tamper
+  rejection, marketable fill; vertical risk math + resting combo cancel; close
+  preview/offset, `--all` flatten, query filtering; and CLI exit-code contracts.
+- Pricing note: marketable test orders cross the spread by one tick — a large
+  buffer trips IBKR's too-aggressive-limit guard (error 202).
 
 ## Out of scope (for now)
 

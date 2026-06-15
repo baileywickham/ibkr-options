@@ -22,3 +22,8 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.0.3",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: requires a running IB Gateway (paper) on port 4002; skips if unreachable",
+]
