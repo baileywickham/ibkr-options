@@ -74,6 +74,20 @@ token; nothing is placed until you re-run with `--execute TOKEN`.
 - **Limit orders only**, and prices must respect IBKR tick rules ($0.05 ≥ $3.00,
   else $0.01) or IBKR rejects them.
 
+## Reads vs writes (all-account vs this-CLI)
+
+One consistent rule: **reads are account-wide, writes act only on orders this CLI
+placed.**
+- `positions` and `orders` show everything the account holds, regardless of where
+  it was placed. Each open order carries `client_id` (0 = placed via web Portal /
+  TWS / mobile) and `perm_id` (stable id to cross-reference with the Portal).
+- `cancel` only works on orders this CLI placed (nonzero `order_id`). An order with
+  `client_id: 0` is read-only here — cancel it where it was placed. So before a
+  `close`, check `orders`: if a resting exit already exists there, closing again
+  would double up.
+- `trades` is the exception the TWS API forces: fills are session-scoped, not
+  account-wide. For full account trade history use the Portal or Flex Queries.
+
 ## Operational notes
 
 - If you get `gateway_unreachable`: ask the user to launch IB Gateway

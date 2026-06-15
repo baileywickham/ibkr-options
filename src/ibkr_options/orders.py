@@ -206,15 +206,43 @@ def execute_vertical(ib, account: str | None, token: str, params: dict) -> dict:
 
 # -- cancel -------------------------------------------------------------------
 
+# Consistency rule across the CLI: reads are account-wide (see everything the
+# account holds, regardless of which channel placed it); writes act only on
+# orders THIS CLI placed. An order's client_id == 0 (or any id that isn't this
+# session's) means it came from the web Portal / TWS / mobile and is read-only
+# here — manage it where it was placed.
+
+def _all_open_trades(ib) -> list:
+    """Every open order for the account, account-wide.
+
+    reqOpenOrders() returns only this client's orders; reqAllOpenOrders() is
+    account-wide, so the CLI is never blind to externally-placed resting orders
+    when it lists, closes, or cancels.
+    """
+    ib.reqAllOpenOrders()
+    ib.sleep(1.5)
+    return ib.openTrades()
+
+
 def cancel_order(ib, order_id: int) -> dict:
-    ib.reqOpenOrders()
-    ib.sleep(0.5)
-    for trade in ib.openTrades():
+    if order_id == 0:
+        raise ValueError("0 is not a valid order id")
+    trades = _all_open_trades(ib)
+    # Orders this CLI placed are returned with their real (nonzero) orderId;
+    # externally-placed orders surface with orderId 0, so this matches only ours.
+    for trade in trades:
         if trade.order.orderId == order_id:
             ib.cancelOrder(trade.order)
             ib.sleep(1.0)
             return {"action": "cancelled", **_status_dict(trade)}
-    raise ValueError(f"no open order with id {order_id}")
+    # Help the caller who passed a perm_id of an externally-placed order.
+    for trade in trades:
+        if trade.order.permId == order_id:
+            raise ValueError(
+                f"order perm_id {order_id} was placed via another channel "
+                f"(client_id {trade.order.clientId}); cancel it where it was placed"
+            )
+    raise ValueError(f"no open order with id {order_id} placed by this CLI")
 
 
 # -- close (flatten) ----------------------------------------------------------
@@ -306,24 +334,32 @@ def list_positions(ib) -> list[dict]:
 
 
 def list_open_orders(ib) -> list[dict]:
-    ib.reqOpenOrders()
-    ib.sleep(0.5)
     return [
         {
             "order_id": t.order.orderId,
-            "contract": t.contract.localSymbol or t.contract.symbol,
+            "contract": t.contract.localSymbol or t.contract.symbol or str(t.contract.conId),
             "side": t.order.action,
             "qty": num(t.order.totalQuantity),
             "type": t.order.orderType,
             "limit": num(t.order.lmtPrice),
             "tif": t.order.tif,
             "status": t.orderStatus.status,
+            # account-wide, stable id (same across channels) — use this to
+            # cross-reference with the Portal; cancel only works on our own.
+            "perm_id": t.order.permId,
+            # 0 = placed outside this CLI (web Portal, TWS, mobile, other client)
+            "client_id": t.order.clientId,
         }
-        for t in ib.openTrades()
+        for t in _all_open_trades(ib)
     ]
 
 
 def list_trades(ib) -> list[dict]:
+    # Unlike positions/orders, fills are not account-wide on the TWS API: this
+    # returns executions visible to the API session for the current day. For
+    # full account trade history use the Portal or Flex Queries.
+    ib.reqExecutions()
+    ib.sleep(1.0)
     return [
         {
             "time": str(f.time),

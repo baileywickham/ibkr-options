@@ -41,6 +41,11 @@ that token. Output is JSON, so it composes well with other tools and with agents
 - **Rejection surfacing.** A rejected order returns `"rejected": true` with the reason
   (e.g. `[202] Limit price too far outside of NBBO`); an order IBKR never acknowledges
   is flagged `"unconfirmed": true`. A non-error status is never reported as success.
+- **Reads account-wide, writes client-scoped.** `positions` and `orders` show everything
+  the account holds (each order tagged with `client_id` and `perm_id`), so the tool is
+  never blind to orders placed in the web Portal / TWS / mobile. `cancel` acts only on
+  orders this CLI placed; externally-placed orders are read-only here. (`trades` is
+  session-scoped — a TWS API limitation; use the Portal/Flex for full history.)
 
 ## Requirements
 
