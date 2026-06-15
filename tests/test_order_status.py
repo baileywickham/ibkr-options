@@ -66,6 +66,28 @@ def test_partial_fill_then_cancel_not_flagged_rejected():
     trade = Trade(Status("Cancelled", filled=1.0), [LogEntry(0, "x")])
     out = orders._status_dict(trade)
     assert "rejected" not in out
+    assert "unconfirmed" not in out
+
+
+def test_unacknowledged_status_is_flagged_unconfirmed():
+    # IBKR never acknowledged it within the settle window
+    trade = Trade(Status("PendingSubmit"), [])
+    out = orders._status_dict(trade)
+    assert out.get("unconfirmed") is True
+    assert "rejected" not in out
+
+
+def test_blank_status_is_flagged_unconfirmed():
+    trade = Trade(Status(""), [])
+    out = orders._status_dict(trade)
+    assert out.get("unconfirmed") is True
+
+
+def test_working_statuses_are_not_unconfirmed():
+    for s in ("Filled", "Submitted", "PreSubmitted"):
+        out = orders._status_dict(Trade(Status(s, filled=1.0 if s == "Filled" else 0.0), []))
+        assert "unconfirmed" not in out
+        assert "rejected" not in out
 
 
 def test_limit_order_pins_account():

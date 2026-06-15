@@ -196,11 +196,15 @@ def run(args) -> int:
             "stock": _stock_params,
         }[args.command](args, mode)
 
+    # One source of truth for "this invocation places an order": the guard,
+    # account pinning, and the execute/preview dispatch must never disagree.
+    executing = args.command in _TRADING_EXECUTE and bool(getattr(args, "execute", None))
+
     ib = connect(cfg)
     try:
         # Placing an order: enforce the delayed-data guard and pin the account.
         account = None
-        if args.command in _TRADING_EXECUTE and getattr(args, "execute", None):
+        if executing:
             _guard_live_delayed(cfg, getattr(args, "allow_delayed", False))
             account = resolve_account(ib, cfg)
         if args.command == "status":
@@ -228,18 +232,18 @@ def run(args) -> int:
                 out = {"contract": stk.symbol, "data": market.data_kind(ib),
                        "last_close": market.spot_price(ib, stk)}
         elif args.command == "place":
-            out = (orders.execute_single(ib, account, args.execute, params) if args.execute
+            out = (orders.execute_single(ib, account, args.execute, params) if executing
                    else orders.preview_single(ib, params))
         elif args.command == "place-vertical":
-            out = (orders.execute_vertical(ib, account, args.execute, params) if args.execute
+            out = (orders.execute_vertical(ib, account, args.execute, params) if executing
                    else orders.preview_vertical(ib, params))
         elif args.command == "stock":
-            out = (orders.execute_stock(ib, account, args.execute, params) if args.execute
+            out = (orders.execute_stock(ib, account, args.execute, params) if executing
                    else orders.preview_stock(ib, params))
         elif args.command == "cancel":
             out = {"mode": mode, **orders.cancel_order(ib, args.order_id)}
         elif args.command == "close":
-            if args.execute:
+            if executing:
                 out = orders.execute_close(ib, account, args.execute)
             else:
                 if args.all and args.query:
@@ -252,7 +256,7 @@ def run(args) -> int:
             raise ValueError(f"unknown command {args.command}")
 
         # Loud reminder on any preview priced off delayed data.
-        is_preview = args.command in _TRADING_EXECUTE and not getattr(args, "execute", None)
+        is_preview = args.command in _TRADING_EXECUTE and not executing
         if is_preview and cfg.get("market_data_type", 3) == 3:
             out["warning"] = "prices are DELAYED ~15 min; verify against a live quote before trading"
     finally:

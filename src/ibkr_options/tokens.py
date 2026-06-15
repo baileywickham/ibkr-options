@@ -49,10 +49,20 @@ def consume(token: str, params: dict, now: float | None = None, pending_dir: Pat
     path = pending_dir / f"{token}.json"
     if not path.exists():
         raise TokenError("no pending preview for this token (already used, or never previewed)")
-    payload = json.loads(path.read_text())
+    payload = _read_pending(path)
     path.unlink()
     if now - payload["created_at"] > TTL_SECONDS:
         raise TokenError("preview expired (>5 minutes old); run the preview again")
+
+
+def _read_pending(path: Path) -> dict:
+    try:
+        payload = json.loads(path.read_text())
+        payload["created_at"]  # presence check
+        return payload
+    except (ValueError, KeyError) as exc:
+        path.unlink(missing_ok=True)
+        raise TokenError(f"pending preview file is corrupt: {exc}") from exc
 
 
 def consume_stored(token: str, now: float | None = None, pending_dir: Path | None = None) -> dict:
@@ -68,8 +78,10 @@ def consume_stored(token: str, now: float | None = None, pending_dir: Path | Non
     path = pending_dir / f"{token}.json"
     if not path.exists():
         raise TokenError("no pending preview for this token (already used, or never previewed)")
-    payload = json.loads(path.read_text())
+    payload = _read_pending(path)
     path.unlink()
     if now - payload["created_at"] > TTL_SECONDS:
         raise TokenError("preview expired (>5 minutes old); run the preview again")
+    if "params" not in payload:
+        raise TokenError("pending preview file is missing its order plan")
     return payload["params"]

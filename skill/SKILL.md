@@ -5,8 +5,9 @@ description: Trade and research options on Interactive Brokers via a local CLI (
 
 # IBKR Options Trading
 
-All commands: `uv run --project /Users/baileywickham/workspace/ibkr-options ibkr <command>`
-Output is JSON. Exit codes: 0 ok, 2 gateway unreachable, 3 validation error, 4 token rejected.
+All commands run as `ibkr <command>` (installed via `uv tool install --editable .`
+from the repo). Output is JSON. Exit codes: 0 ok, 2 gateway unreachable,
+3 validation error, 4 token rejected, 5 account error, 6 delayed-data blocked.
 
 **Mode**: paper account by default (Gateway port 4002). Add `--live` (port 4001) ONLY
 when the user explicitly says to trade the live account.

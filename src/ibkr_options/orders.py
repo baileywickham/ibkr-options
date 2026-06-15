@@ -13,6 +13,8 @@ from .verticals import vertical_risk
 
 # Order statuses that mean the order is not (and will not become) working.
 _DEAD_STATUSES = {"Cancelled", "ApiCancelled", "Inactive"}
+# Statuses that mean IBKR has acknowledged a live/working (or filled) order.
+_WORKING_STATUSES = {"Filled", "Submitted", "PreSubmitted"}
 
 
 def _limit_order(account: str | None, side: str, qty, limit, tif: str) -> LimitOrder:
@@ -50,8 +52,13 @@ def _status_dict(trade, collected: dict | None = None) -> dict:
         out["messages"] = [f"[{code}] {msg}" for code, msg in sorted(messages.items())]
     # A dead status with nothing filled is a rejection the caller must see —
     # never let it read as a quietly-working order.
-    if status in _DEAD_STATUSES and not num(trade.orderStatus.filled):
-        out["rejected"] = True
+    if status in _DEAD_STATUSES:
+        if not num(trade.orderStatus.filled):
+            out["rejected"] = True
+    elif status not in _WORKING_STATUSES:
+        # e.g. still PendingSubmit/ApiPending or blank: IBKR never acknowledged
+        # it within the settle window. Not confirmed working — say so explicitly.
+        out["unconfirmed"] = True
     return out
 
 
@@ -112,8 +119,10 @@ def preview_single(ib, params: dict) -> dict:
 
 
 def execute_single(ib, account: str | None, token: str, params: dict) -> dict:
-    tokens.consume(token, params)
+    # Resolve before consuming the token: a transient resolve failure must not
+    # burn the one-shot token and force a re-preview.
     opt = resolve_option(ib, params["symbol"], params["expiry"], params["strike"], params["right"])
+    tokens.consume(token, params)
     order = _limit_order(account, params["side"], params["qty"], params["limit"], params["tif"])
     return {"action": "placed_single", "mode": params["mode"], "account": account,
             "contract": opt.localSymbol, **_place(ib, opt, order)}
@@ -136,8 +145,8 @@ def preview_stock(ib, params: dict) -> dict:
 
 
 def execute_stock(ib, account: str | None, token: str, params: dict) -> dict:
-    tokens.consume(token, params)
     stk = resolve_stock(ib, params["symbol"])
+    tokens.consume(token, params)
     order = _limit_order(account, params["side"], params["qty"], params["limit"], params["tif"])
     return {"action": "placed_stock", "mode": params["mode"], "account": account,
             "contract": stk.symbol, **_place(ib, stk, order)}
@@ -186,9 +195,9 @@ def preview_vertical(ib, params: dict) -> dict:
 
 
 def execute_vertical(ib, account: str | None, token: str, params: dict) -> dict:
-    tokens.consume(token, params)
     long_leg, short_leg = _vertical_legs(ib, params)
     combo = _combo_contract(params["symbol"], long_leg, short_leg)
+    tokens.consume(token, params)
     order = _limit_order(account, params["side"], params["qty"], params["limit"], params["tif"])
     return {"action": "placed_vertical", "mode": params["mode"], "account": account,
             "legs": [long_leg.localSymbol, short_leg.localSymbol],

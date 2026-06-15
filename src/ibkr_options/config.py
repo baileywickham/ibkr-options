@@ -23,7 +23,10 @@ DEFAULT_PORTS = {"paper": 4002, "live": 4001}
 def load_config(mode: str | None = None) -> dict:
     file_cfg: dict = {}
     if CONFIG_PATH.exists():
-        file_cfg = tomllib.loads(CONFIG_PATH.read_text())
+        try:
+            file_cfg = tomllib.loads(CONFIG_PATH.read_text())
+        except tomllib.TOMLDecodeError as exc:
+            raise ValueError(f"config file {CONFIG_PATH} is not valid TOML: {exc}") from exc
 
     resolved_mode = mode or os.environ.get("IBKR_MODE") or file_cfg.get("mode") or "paper"
     if resolved_mode not in ("paper", "live"):
