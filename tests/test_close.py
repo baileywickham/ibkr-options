@@ -7,12 +7,14 @@ from ibkr_options import orders, tokens
 
 
 class FakeContract:
-    def __init__(self, conid, local, exchange="SMART"):
+    def __init__(self, conid, local, exchange="SMART", secType="OPT", strike=None, right=""):
         self.conId = conid
         self.localSymbol = local
         self.symbol = local.split()[0]
         self.exchange = exchange
-        self.secType = "OPT"
+        self.secType = secType
+        self.strike = strike
+        self.right = right
 
 
 class FakePosition:
@@ -43,8 +45,8 @@ class FakeOrder:
     orderId = 99
 
 
-LONG = FakeContract(101, "AAPL  260717C00355000")
-SHORT = FakeContract(102, "AAPL  260717C00360000")
+LONG = FakeContract(101, "AAPL  260717C00355000", strike=355.0, right="C")
+SHORT = FakeContract(102, "AAPL  260717C00360000", strike=360.0, right="C")
 
 
 class FakeIB:
@@ -107,6 +109,30 @@ def test_query_filters_to_one_position():
     ib = make_ib()
     out = orders.preview_close(ib, "paper", "355", None, "DAY")
     assert [p["contract"] for p in out["positions"]] == ["AAPL  260717C00355000"]
+
+
+def test_query_matches_by_strike_and_right():
+    ib = make_ib()  # long 355C, short 360C
+    # bare strike still works
+    assert [c.localSymbol for c in [p.contract for p in orders.find_positions(ib, "355")]] == \
+        ["AAPL  260717C00355000"]
+    # the documented strike+right form (`close 355C`) now matches
+    assert [p.contract.localSymbol for p in orders.find_positions(ib, "355C")] == \
+        ["AAPL  260717C00355000"]
+    # wrong right matches nothing (355P when only 355C is held)
+    assert orders.find_positions(ib, "355P") == []
+
+
+def test_close_forces_smart_routing():
+    # A stock position's native exchange (NASDAQ) must be overridden to SMART so
+    # the close isn't direct-routed (which precautionary settings can block).
+    stk = FakeContract(201, "AAPL", exchange="NASDAQ", secType="STK")
+    ib = FakeIB(positions=[FakePosition(stk, 10.0)], quotes={201: (190.0, 190.1)})
+    out = orders.preview_close(ib, "paper", None, None, "DAY")
+    assert stk.exchange == "SMART"
+    orders.execute_close(ib, None, out["token"])
+    assert stk.exchange == "SMART"
+    assert ib.placed and ib.placed[0][1] == "SELL"  # SELL 10 shares to close the long
 
 
 def test_limit_override_applied():

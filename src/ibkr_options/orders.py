@@ -24,7 +24,7 @@ def _limit_order(account: str | None, side: str, qty, limit, tif: str) -> LimitO
     return order
 
 
-def _status_dict(trade, collected: dict | None = None) -> dict:
+def _status_dict(trade, collected: dict | None = None, *, is_cancel: bool = False) -> dict:
     """Build the result dict from a trade plus any captured error events.
 
     Pure (no IB calls) so the status/rejection logic is unit-testable. Messages
@@ -50,6 +50,11 @@ def _status_dict(trade, collected: dict | None = None) -> dict:
     }
     if messages:
         out["messages"] = [f"[{code}] {msg}" for code, msg in sorted(messages.items())]
+    if is_cancel:
+        # A cancel's resulting status IS its outcome (Cancelled == success). The
+        # placement-rejection heuristic below would mislabel a clean cancel
+        # (Cancelled, 0 filled, no error message) as rejected, so skip it.
+        return out
     # A dead status with nothing filled is a rejection the caller must see —
     # never let it read as a quietly-working order.
     if status in _DEAD_STATUSES:
@@ -243,7 +248,7 @@ def cancel_order(ib, order_id: int) -> dict:
         if trade.order.orderId == order_id:
             ib.cancelOrder(trade.order)
             ib.sleep(1.0)
-            return {"action": "cancelled", **_status_dict(trade)}
+            return {"action": "cancelled", **_status_dict(trade, is_cancel=True)}
     # Help the caller who passed a perm_id of an externally-placed order.
     for trade in trades:
         if trade.order.permId == order_id:
@@ -264,14 +269,28 @@ def _closing_action(qty: float) -> str:
     return "SELL" if qty > 0 else "BUY"
 
 
+def _match_targets(contract) -> list[str]:
+    """Normalized strings a query may match a position by: the OCC localSymbol,
+    the underlying symbol, and (for options) a human strike+right like "300C" so
+    `close 300C` works, not just the bare strike `close 300`."""
+    targets = [contract.localSymbol or "", contract.symbol or ""]
+    strike = getattr(contract, "strike", None)
+    right = getattr(contract, "right", "") or ""
+    if contract.secType == "OPT" and strike and right:
+        k = int(strike) if float(strike).is_integer() else strike
+        targets.append(f"{k}{right}")                     # 300C
+        targets.append(f"{contract.symbol or ''}{k}{right}")  # AAPL300C
+    return [_norm(t) for t in targets if t]
+
+
 def find_positions(ib, query: str | None) -> list:
     """Open positions, optionally filtered by a whitespace-insensitive substring
-    match against the contract's localSymbol/symbol."""
+    match against the contract's localSymbol, underlying symbol, or strike+right."""
     live = [p for p in ib.positions() if num(p.position)]
     if not query:
         return live
     q = _norm(query)
-    return [p for p in live if q in _norm(p.contract.localSymbol or p.contract.symbol)]
+    return [p for p in live if any(q in t for t in _match_targets(p.contract))]
 
 
 def _as_vertical(matches: list):
@@ -303,8 +322,7 @@ def _preview_close_combo(ib, mode, vert, limit_override, tif) -> dict:
     long_pos, short_pos = vert
     long_c, short_c = long_pos.contract, short_pos.contract
     for c in (long_c, short_c):
-        if not c.exchange:
-            c.exchange = "SMART"
+        c.exchange = "SMART"  # see _closing note: force SMART, never direct-route
     long_t, kind = get_ticker(ib, long_c)
     short_t, _ = get_ticker(ib, short_c)
     long_bid, short_ask = num(long_t.bid), num(short_t.ask)
@@ -357,8 +375,10 @@ def preview_close(ib, mode: str, query: str | None, limit_override: float | None
     plan, display = [], []
     for pos in matches:
         contract = pos.contract
-        if not contract.exchange:
-            contract.exchange = "SMART"
+        # Force SMART: a position's native exchange (e.g. a stock's "NASDAQ")
+        # direct-routes, which precautionary settings can block ([10311]). The
+        # buy/sell paths SMART-route, so closes must too.
+        contract.exchange = "SMART"
         qty = num(pos.position)
         action = _closing_action(qty)
         ticker, kind = get_ticker(ib, contract)
@@ -405,8 +425,10 @@ def execute_close(ib, account: str | None, token: str) -> dict:
             results.append({"contract": o["localSymbol"], "status": "skipped_not_open"})
             continue
         contract = pos.contract
-        if not contract.exchange:
-            contract.exchange = "SMART"
+        # Force SMART: a position's native exchange (e.g. a stock's "NASDAQ")
+        # direct-routes, which precautionary settings can block ([10311]). The
+        # buy/sell paths SMART-route, so closes must too.
+        contract.exchange = "SMART"
         order = _limit_order(account, o["action"], o["qty"], o["limit"], o["tif"])
         results.append({"contract": o["localSymbol"], "action": o["action"],
                         **_place(ib, contract, order)})

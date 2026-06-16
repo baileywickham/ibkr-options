@@ -66,6 +66,15 @@ def test_cancels_own_order_by_orderid():
     assert out["action"] == "cancelled"
 
 
+def test_successful_cancel_is_not_flagged_rejected():
+    # A cancel yields status Cancelled with 0 filled; the placement-rejection
+    # heuristic must NOT mislabel that clean cancel as rejected.
+    ib = FakeIB([OURS, EXTERNAL])
+    out = orders.cancel_order(ib, 37)
+    assert out["status"] == "Cancelled"
+    assert "rejected" not in out
+
+
 def test_zero_is_rejected_and_cancels_nothing():
     ib = FakeIB([OURS, EXTERNAL])
     with pytest.raises(ValueError, match="not a valid order id"):
