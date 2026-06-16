@@ -37,9 +37,14 @@ ibkr close --all --limit 0.02            # override the closing limit price
 Limit orders only; market orders are intentionally not implemented.
 For verticals, `--limit` is the net debit (BUY) or net credit (SELL), always positive.
 
-`close` builds an offsetting order per position (SELL to close a long, BUY to
-close a short) priced marketably at the current bid/ask. There is no native
-close-position call in the IBKR API — this replicates the TWS "Close" button.
+`close` builds an offsetting order priced marketably at the current bid/ask
+(SELL to close a long, BUY to close a short). A long/short option pair on one
+underlying is recognized as a spread and closed as a SINGLE net-priced combo —
+so `--limit` is the net price for the whole spread, not a per-leg price (a
+per-leg limit would make the buy-to-close leg marketable and leg you into a
+naked option). Other multi-leg matches refuse `--limit`; narrow the query to one
+leg or use `place-vertical --side SELL` for a net-priced combo close. There is no
+native close-position call in the IBKR API — this replicates the TWS "Close" button.
 Same preview→confirm→execute flow as place. If a position has no bid/ask quote
 (e.g. a deep-OTM contract whose closing bid is negative), pass `--limit`. The
 preview prints each position, its closing action, quantity, and limit, plus a

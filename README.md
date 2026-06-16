@@ -24,7 +24,8 @@ that token. Output is JSON, so it composes well with other tools and with agents
 - Option **chains** with bid/ask, mid, and Greeks; stock and option **quotes**.
 - **Single-leg** option orders and **vertical spreads** (native combo orders).
 - **Stock** orders (shares).
-- **Close** positions with offsetting marketable-limit orders (`close`/`close --all`).
+- **Close** positions with offsetting limit orders (`close`/`close --all`); a
+  long/short option pair is closed as one net-priced **combo**, never leg-by-leg.
 - Account state: `status`, `positions`, `orders`, `trades`.
 - Limit orders only — market orders are intentionally not implemented.
 

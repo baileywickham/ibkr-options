@@ -89,16 +89,18 @@ def make_ib():
     )
 
 
-def test_preview_builds_offsetting_marketable_orders_and_places_nothing():
+def test_preview_closes_spread_as_one_combo_at_net_and_places_nothing():
     ib = make_ib()
     out = orders.preview_close(ib, "paper", None, None, "DAY")
     assert ib.placed == []
-    plan = {p["contract"]: p for p in out["positions"]}
-    # long -> SELL at bid; short -> BUY at ask
-    assert plan["AAPL  260717C00355000"]["action"] == "SELL"
-    assert plan["AAPL  260717C00355000"]["limit"] == 0.08
-    assert plan["AAPL  260717C00360000"]["action"] == "BUY"
-    assert plan["AAPL  260717C00360000"]["limit"] == 0.10
+    # A long/short option pair is one spread -> a single combo close, not two
+    # per-leg orders. Marketable net = long bid - short ask = 0.08 - 0.10.
+    assert len(out["positions"]) == 1
+    leg = out["positions"][0]
+    assert leg["close"] == "spread (combo)"
+    assert leg["action"] == "SELL"
+    assert leg["net_limit"] == -0.02
+    assert leg["legs"] == ["AAPL  260717C00355000", "AAPL  260717C00360000"]
 
 
 def test_query_filters_to_one_position():
@@ -128,25 +130,50 @@ def test_no_matching_position_errors():
         orders.preview_close(ib, "paper", "TSLA", None, "DAY")
 
 
-def test_execute_places_planned_offsetting_orders():
+def test_execute_places_one_combo_order_for_a_spread():
     ib = make_ib()
     token = orders.preview_close(ib, "paper", None, None, "DAY")["token"]
     out = orders.execute_close(ib, None, token)
-    assert len(ib.placed) == 2
-    assert (101, "SELL", 1.0, 0.08) in ib.placed
-    assert (102, "BUY", 1.0, 0.10) in ib.placed
+    # ONE combo order (BAG conId defaults to 0), not two per-leg orders.
+    assert len(ib.placed) == 1
+    conid, action, qty, limit = ib.placed[0]
+    assert (action, qty, limit) == ("SELL", 1.0, -0.02)
     assert all(o.get("status") != "skipped_not_open" for o in out["orders"])
 
 
-def test_execute_skips_position_that_vanished():
+def test_combo_close_uses_net_limit_not_per_leg():
+    """Regression: a --limit on a spread must be the NET combo price on a single
+    order, never the same number on each leg (which made the buy-to-close leg
+    marketable and legged into a naked option)."""
+    ib = make_ib()
+    out = orders.preview_close(ib, "paper", None, 8.00, "GTC")
+    assert out["positions"][0]["net_limit"] == 8.00
+    token = out["token"]
+    orders.execute_close(ib, None, token)
+    # Exactly one SELL combo at the net price — and crucially NO marketable
+    # BUY on the short leg at 8.00.
+    assert ib.placed == [(0, "SELL", 1.0, 8.00)]
+
+
+def test_multileg_with_limit_when_not_a_spread_is_refused():
+    """Two same-side legs can't take one per-leg --limit safely -> refuse."""
+    ib = FakeIB(
+        positions=[FakePosition(LONG, 1.0), FakePosition(SHORT, 1.0)],  # both long
+        quotes={101: (0.08, 0.10), 102: (0.05, 0.10)},
+    )
+    with pytest.raises(ValueError, match="leg you in"):
+        orders.preview_close(ib, "paper", None, 8.00, "GTC")
+    assert ib.placed == []
+
+
+def test_execute_skips_spread_if_a_leg_vanished():
     ib = make_ib()
     token = orders.preview_close(ib, "paper", None, None, "DAY")["token"]
-    # position 102 closed out elsewhere between preview and execute
+    # one leg closed out elsewhere between preview and execute
     ib._positions = [FakePosition(LONG, 1.0)]
     out = orders.execute_close(ib, None, token)
-    assert [p[0] for p in ib.placed] == [101]
-    statuses = {o["contract"]: o.get("status") for o in out["orders"]}
-    assert statuses["AAPL  260717C00360000"] == "skipped_not_open"
+    assert ib.placed == []  # never place a half-combo that could re-open
+    assert out["orders"][0]["status"] == "skipped_not_open"
 
 
 def test_close_token_is_one_shot():

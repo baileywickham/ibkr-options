@@ -160,17 +160,26 @@ def _vertical_legs(ib, params: dict):
     return long_leg, short_leg
 
 
-def _combo_contract(symbol: str, long_leg, short_leg) -> Contract:
+def _combo_contract_conids(symbol: str, long_conid: int, short_conid: int) -> Contract:
+    """A BAG that BUYs the long-strike leg and SELLs the short-strike leg.
+
+    BUYing this combo opens a debit vertical; SELLing it (action="SELL") is the
+    exact offset, so it doubles as the closing order for a long vertical.
+    """
     return Contract(
         secType="BAG",
         symbol=symbol,
         currency="USD",
         exchange="SMART",
         comboLegs=[
-            ComboLeg(conId=long_leg.conId, ratio=1, action="BUY", exchange="SMART"),
-            ComboLeg(conId=short_leg.conId, ratio=1, action="SELL", exchange="SMART"),
+            ComboLeg(conId=long_conid, ratio=1, action="BUY", exchange="SMART"),
+            ComboLeg(conId=short_conid, ratio=1, action="SELL", exchange="SMART"),
         ],
     )
+
+
+def _combo_contract(symbol: str, long_leg, short_leg) -> Contract:
+    return _combo_contract_conids(symbol, long_leg.conId, short_leg.conId)
 
 
 def preview_vertical(ib, params: dict) -> dict:
@@ -265,11 +274,86 @@ def find_positions(ib, query: str | None) -> list:
     return [p for p in live if q in _norm(p.contract.localSymbol or p.contract.symbol)]
 
 
+def _as_vertical(matches: list):
+    """Return (long_pos, short_pos) when `matches` is one offsetting option pair
+    on the same underlying (one long, one short, equal size) — i.e. a spread that
+    must be closed as a single combo, not as two independent leg orders. Otherwise
+    None."""
+    if len(matches) != 2:
+        return None
+    a, b = matches
+    if a.contract.secType != "OPT" or b.contract.secType != "OPT":
+        return None
+    if (a.contract.symbol or "") != (b.contract.symbol or ""):
+        return None
+    qa, qb = num(a.position), num(b.position)
+    if not (qa > 0 > qb or qb > 0 > qa):  # need one long and one short
+        return None
+    long_pos, short_pos = (a, b) if qa > 0 else (b, a)
+    if abs(num(long_pos.position)) != abs(num(short_pos.position)):
+        return None  # unequal ratio: not a clean 1:1 close
+    return long_pos, short_pos
+
+
+def _preview_close_combo(ib, mode, vert, limit_override, tif) -> dict:
+    """Close a long vertical as ONE combo: SELL the BAG[BUY long, SELL short],
+    which offsets both legs at a single NET price. Pricing a spread leg-by-leg is
+    the footgun this avoids — a per-leg limit set for the spread net makes the
+    buy-to-close leg marketable and legs you into a naked option."""
+    long_pos, short_pos = vert
+    long_c, short_c = long_pos.contract, short_pos.contract
+    for c in (long_c, short_c):
+        if not c.exchange:
+            c.exchange = "SMART"
+    long_t, kind = get_ticker(ib, long_c)
+    short_t, _ = get_ticker(ib, short_c)
+    long_bid, short_ask = num(long_t.bid), num(short_t.ask)
+    if limit_override is not None:
+        limit = limit_override
+    elif long_bid is not None and short_ask is not None:
+        # Marketable sell-to-close net: receive the long's bid, pay the short's ask.
+        limit = round(long_bid - short_ask, 2)
+    else:
+        raise ValueError(
+            "no combo quote to price the close; pass --limit to set the net "
+            "credit (debit/credit for the spread as a whole, not per leg)"
+        )
+    qty = abs(num(long_pos.position))
+    legs = [long_c.localSymbol or long_c.symbol, short_c.localSymbol or short_c.symbol]
+    plan = [{"combo": True, "symbol": long_c.symbol,
+             "long_conId": long_c.conId, "short_conId": short_c.conId,
+             "localSymbols": legs, "action": "SELL", "qty": qty, "limit": limit, "tif": tif}]
+    display = [{"close": "spread (combo)", "legs": legs, "action": "SELL",
+                "close_qty": qty, "net_limit": limit,
+                "long_bid": long_bid, "short_ask": short_ask, "data": kind}]
+    params = {"kind": "close", "mode": mode, "orders": plan}
+    return {"action": "close_preview", "mode": mode, "positions": display,
+            "token": tokens.save_pending(params)}
+
+
 def preview_close(ib, mode: str, query: str | None, limit_override: float | None, tif: str) -> dict:
     matches = find_positions(ib, query)
     if not matches:
         raise ValueError(f"no open position matching {query!r}" if query
                          else "no open positions to close")
+
+    # A 1-long-1-short option pair is a spread: close it as a single net-priced
+    # combo so a per-leg limit can't leg you in.
+    vert = _as_vertical(matches)
+    if vert is not None:
+        return _preview_close_combo(ib, mode, vert, limit_override, tif)
+
+    # Any other multi-leg match can't take a single per-leg --limit safely: the
+    # same number would be applied to every leg, making opposite-side legs
+    # marketable. Refuse and point at the combo path.
+    if len(matches) > 1 and limit_override is not None:
+        raise ValueError(
+            f"--limit on {len(matches)} matched legs would be applied to each leg "
+            "independently and can leg you in. Narrow the query to one leg, or use "
+            "`place-vertical --side SELL ... --limit <net> --tif <tif>` for a "
+            "net-priced combo close."
+        )
+
     plan, display = [], []
     for pos in matches:
         contract = pos.contract
@@ -304,6 +388,17 @@ def execute_close(ib, account: str | None, token: str) -> dict:
     by_conid = {p.contract.conId: p for p in ib.positions() if num(p.position)}
     results = []
     for o in params["orders"]:
+        if o.get("combo"):
+            # Both legs must still be open; if either vanished since preview,
+            # placing the combo would (re)open a position — skip instead.
+            if by_conid.get(o["long_conId"]) is None or by_conid.get(o["short_conId"]) is None:
+                results.append({"contract": " / ".join(o["localSymbols"]), "status": "skipped_not_open"})
+                continue
+            combo = _combo_contract_conids(o["symbol"], o["long_conId"], o["short_conId"])
+            order = _limit_order(account, o["action"], o["qty"], o["limit"], o["tif"])
+            results.append({"contract": " / ".join(o["localSymbols"]), "action": o["action"],
+                            **_place(ib, combo, order)})
+            continue
         pos = by_conid.get(o["conId"])
         if pos is None:
             # Position already gone since preview — never place, would re-open it.
